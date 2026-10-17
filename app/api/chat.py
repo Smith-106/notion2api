@@ -1,5 +1,8 @@
 import asyncio
 import json
+import os
+import queue
+import threading
 import re
 import time
 import uuid
@@ -26,6 +29,82 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+
+# --- keepalive pump -------------------------------------------------------
+# Notion agent runs can sit silent for minutes (thinking / tool calls). The
+# upstream generator blocks, so pull it in a worker thread (the event loop
+# never stalls) and emit SSE comments while idle so proxies such as
+# Cloudflare (~100 s idle cut) keep the connection open.
+STREAM_KEEPALIVE_S = float(os.getenv("STREAM_KEEPALIVE_S", "15"))
+FIRST_ITEM_WAIT_S = float(os.getenv("FIRST_ITEM_WAIT_S", "20"))
+_KEEPALIVE_SSE = ": keepalive\n\n"
+
+
+class _PumpedStream:
+    def __init__(self, gen: Iterable[Any], idle: float = STREAM_KEEPALIVE_S):
+        self._q: "queue.Queue[tuple[int, Any]]" = queue.Queue()
+        self._idle = idle
+        self._done = False
+        threading.Thread(target=self._run, args=(gen,), daemon=True).start()
+
+    def _run(self, gen: Iterable[Any]) -> None:
+        try:
+            for it in gen:
+                self._q.put((0, it))
+        except BaseException as exc:  # noqa: BLE001
+            self._q.put((1, exc))
+            return
+        self._q.put((2, None))
+
+    def _take(self, timeout: float) -> Any:
+        if self._done:
+            raise StopIteration
+        try:
+            kind, val = self._q.get(timeout=max(0.1, timeout))
+        except queue.Empty:
+            return {"type": "keepalive"}
+        if kind == 0:
+            return val
+        self._done = True
+        if kind == 1:
+            raise val
+        raise StopIteration
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> Any:
+        return self._take(self._idle)
+
+    def first(self, wait: float = FIRST_ITEM_WAIT_S) -> Any:
+        try:
+            return self._take(wait)
+        except StopIteration:
+            return None
+
+
+def _keepalive_wrap(gen: Iterable[Any]) -> Generator[Any, None, None]:
+    """Emit an SSE comment whenever the wrapped generator is silent for a while
+    (covers thinking/search phases that lite mode drops)."""
+    for x in _PumpedStream(gen):
+        if isinstance(x, dict) and x.get("type") == "keepalive":
+            yield _KEEPALIVE_SSE
+        else:
+            yield x
+
+
+class _KAStreamingResponse(StreamingResponse):
+    def __init__(self, content: Any, *args: Any, **kwargs: Any):
+        if hasattr(content, "__next__") and not hasattr(content, "__anext__"):
+            content = _keepalive_wrap(content)
+        super().__init__(content, *args, **kwargs)
+
+
+async def _pump_first(stream_gen: Iterable[Any]) -> tuple["_PumpedStream", Any]:
+    pumped = _PumpedStream(stream_gen)
+    first = await asyncio.to_thread(pumped.first)
+    return pumped, first
 
 
 # ─── 结构化错误响应 ─────────────────────────────────────────────
@@ -219,6 +298,8 @@ def _normalize_stream_item(item: Any) -> dict[str, Any]:
 
     if isinstance(item, dict):
         item_type = str(item.get("type", "") or "").lower()
+        if item_type == "keepalive":
+            return {"type": "keepalive"}
         if item_type == "content":
             return {"type": "content", "text": str(item.get("text", "") or "")}
         if item_type == "search":
@@ -522,6 +603,9 @@ def _create_lite_stream_generator(
         for raw_item in _iter_stream_items(first_item, stream_gen):
             item = _normalize_stream_item(raw_item)
             item_type = item.get("type")
+            if item_type == "keepalive":
+                yield _KEEPALIVE_SSE
+                continue
 
             if item_type == "final_content":
                 final_text = str(item.get("text", "") or "").strip()
@@ -664,6 +748,9 @@ def _create_standard_stream_generator(
         for raw_item in _iter_stream_items(first_item, stream_gen):
             item = _normalize_stream_item(raw_item)
             item_type = item.get("type")
+            if item_type == "keepalive":
+                yield _KEEPALIVE_SSE
+                continue
 
             if item_type == "final_content":
                 final_text = str(item.get("text", "") or "").strip()
@@ -947,7 +1034,7 @@ async def _handle_lite_request(
 
             # 调用 Notion API（不使用 thread_id）
             stream_gen = client.stream_response(transcript, thread_id=None)
-            first_item = next(stream_gen, None)
+            stream_gen, first_item = await _pump_first(stream_gen)
 
             if first_item is None:
                 raise NotionUpstreamError(
@@ -961,7 +1048,7 @@ async def _handle_lite_request(
                     "Connection": "keep-alive",
                     "X-Accel-Buffering": "no",
                 }
-                return StreamingResponse(
+                return _KAStreamingResponse(
                     _create_lite_stream_generator(
                         response_id,
                         req_body.model,
@@ -977,7 +1064,7 @@ async def _handle_lite_request(
             authoritative_final_content = ""
             authoritative_final_source_type = ""
 
-            for raw_item in _iter_stream_items(first_item, stream_gen):
+            for raw_item in await asyncio.to_thread(list, _iter_stream_items(first_item, stream_gen)):
                 item = _normalize_stream_item(raw_item)
                 item_type = item.get("type")
 
@@ -1137,7 +1224,7 @@ async def _handle_standard_request(
 
             # 调用 Notion API（不使用 thread_id，让 Notion ��动处理）
             stream_gen = client.stream_response(transcript, thread_id=None)
-            first_item = next(stream_gen, None)
+            stream_gen, first_item = await _pump_first(stream_gen)
 
             if first_item is None:
                 raise NotionUpstreamError(
@@ -1152,7 +1239,7 @@ async def _handle_standard_request(
                     "X-Accel-Buffering": "no",
                 }
                 client_type = request.headers.get("X-Client-Type", "").lower()
-                return StreamingResponse(
+                return _KAStreamingResponse(
                     _create_standard_stream_generator(
                         response_id,
                         req_body.model,
@@ -1171,7 +1258,7 @@ async def _handle_standard_request(
             authoritative_final_content = ""
             authoritative_final_source_type = ""
 
-            for raw_item in _iter_stream_items(first_item, stream_gen):
+            for raw_item in await asyncio.to_thread(list, _iter_stream_items(first_item, stream_gen)):
                 item = _normalize_stream_item(raw_item)
                 item_type = item.get("type")
 
@@ -1469,7 +1556,7 @@ async def create_chat_completion(
                     thread_id = None
 
             stream_gen = client.stream_response(transcript, thread_id=thread_id)
-            first_item = next(stream_gen, None)
+            stream_gen, first_item = await _pump_first(stream_gen)
 
             # 保存 thread_id（如果是新对话或刚切换模型）
             if not thread_id and hasattr(client, "current_thread_id"):
@@ -1498,6 +1585,9 @@ async def create_chat_completion(
                     for raw_item in _iter_stream_items(first_item, stream_gen):
                         item = _normalize_stream_item(raw_item)
                         item_type = item.get("type")
+                        if item_type == "keepalive":
+                            yield _KEEPALIVE_SSE
+                            continue
 
                         if item_type == "search":
                             search_data = item.get("data")
@@ -1797,7 +1887,7 @@ async def create_chat_completion(
                     "X-Conversation-Id": conversation_id,
                     **memory_headers,
                 }
-                return StreamingResponse(
+                return _KAStreamingResponse(
                     openai_stream_generator(),
                     media_type="text/event-stream",
                     headers=stream_headers,
@@ -1807,7 +1897,7 @@ async def create_chat_completion(
             thinking_parts: list[str] = []
             authoritative_final_content = ""
             authoritative_final_source_type = ""
-            for raw_item in _iter_stream_items(first_item, stream_gen):
+            for raw_item in await asyncio.to_thread(list, _iter_stream_items(first_item, stream_gen)):
                 item = _normalize_stream_item(raw_item)
                 item_type = item.get("type")
                 if item_type == "final_content":
