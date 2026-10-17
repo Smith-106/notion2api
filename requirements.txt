@@ -7,3 +7,4 @@ pydantic
 slowapi
 httpx
 websocket-client
+curl_cffi>=0.7

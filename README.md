@@ -224,6 +224,10 @@ for chunk in response:
 | `NOTION_CLIENT_VERSION` | 覆盖 Notion 客户端版本号 | `23.13.20260228.0625` |
 | `NOTION_URL` | Notion 站点根地址（镜像/反代） | `https://www.notion.so` |
 | `NOTION_DOMAIN` | login.py cookie domain | `www.notion.so` |
+| `NOTION_RUNTIME` | `agent_service`（新版 Notion Agent 协议）/ `legacy`（runInferenceTranscript） | `agent_service` |
+| `NOTION_IMPERSONATE` | curl_cffi 浏览器 TLS 指纹 | `chrome` |
+| `AGENT_SERVICE_TIMEOUT_S` | agent_service 单次回复超时（秒） | `240` |
+| `AGENT_SERVICE_DELETE_THREAD` | 回复后删除 Notion 里的线程 | `false` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 | `TZ` | 时区 | `Asia/Shanghai` |
 

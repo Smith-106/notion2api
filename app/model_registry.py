@@ -22,6 +22,20 @@ MODEL_MAP: dict[str, str] = {
     "fable-5": "acai-budino-high",
     "gemini-3flash": "gingerbread",
     "gpt-6-astra": "orlando-quinn",
+    # added 2026-10-17 (agent_service runtime; codenames from getAvailableModels)
+    "gpt-6.1-sol": "omniberry-sundae",
+    "gpt-6-luna": "omodi",
+    "claude-sonnet5.5": "achira-donut",
+    "claude-opus5.5": "albuquerque-quinn",
+    "claude-haiku5.5": "amla-jam",
+    "gemini-3.6flash": "vertex-gemini-3.6-flash",
+    "gemini-3.7flash": "grapefruit-zeppole",
+    "gpt-5.4-mini": "oregon-grape-medium",
+    "gpt-5.4-nano": "otaheite-apple-medium",
+    "deepseek-v4flash": "baseten-deepseek-v4-flash",
+    "kimi-k3": "fireworks-kimi-k3",
+    # "auto" = let Notion pick (agent_service only; legacy falls back to default model)
+    "auto": "auto",
 }
 
 NOTION_MODEL_REVERSE_MAP: dict[str, str] = {value: key for key, value in MODEL_MAP.items()}
@@ -50,6 +64,18 @@ DISPLAY_NAMES: dict[str, str] = {
     "fable-5": "Fable 5",
     "gemini-3flash": "Gemini 3 Flash",
     "gpt-6-astra": "GPT-6 Astra",
+    "gpt-6.1-sol": "GPT-6.1 Sol",
+    "gpt-6-luna": "GPT-6 Luna",
+    "claude-sonnet5.5": "Sonnet 5.5",
+    "claude-opus5.5": "Opus 5.5",
+    "claude-haiku5.5": "Haiku 5.5",
+    "gemini-3.6flash": "Gemini 3.6 Flash",
+    "gemini-3.7flash": "Gemini 3.7 Flash",
+    "gpt-5.4-mini": "GPT-5.4 Mini",
+    "gpt-5.4-nano": "GPT-5.4 Nano",
+    "deepseek-v4flash": "DeepSeek V4 Flash",
+    "kimi-k3": "Kimi K3",
+    "auto": "Auto",
 }
 
 MODEL_ICONS: dict[str, str] = {
@@ -83,7 +109,12 @@ DEFAULT_MODEL = "claude-sonnet4.6"
 
 
 def get_notion_model(model_name: str) -> str:
-    return MODEL_MAP.get(model_name, MODEL_MAP[DEFAULT_MODEL])
+    if model_name in MODEL_MAP:
+        return MODEL_MAP[model_name]
+    # already a Notion codename (transcripts store codenames; _to_notion_transcript maps again)
+    if model_name in NOTION_MODEL_REVERSE_MAP:
+        return model_name
+    return MODEL_MAP[DEFAULT_MODEL]
 
 
 # 需要走 markdown-chat 的 Notion 内部代号（vertex- 前缀的模型）
