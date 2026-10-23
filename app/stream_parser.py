@@ -763,7 +763,8 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
     # pending：o:"a" /s/- 注册但尚未绑定到 Notion 真实 index 的段落
     _pending_segments: list[dict] = []  # [{seg_class, value_types_local, next_val_id_local}]
 
-    for line in response.iter_lines(decode_unicode=True):
+    # curl_cffi's iter_lines() does not support decode_unicode (NotImplementedError); decode per line below.
+    for line in response.iter_lines():
         if not line:
             continue
         if isinstance(line, bytes):

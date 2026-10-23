@@ -222,6 +222,10 @@ Access `http://localhost:8000` for the built-in **Notion AI Studio** interface:
 | `NOTION_CLIENT_VERSION` | Override Notion client version header | `23.13.20260228.0625` |
 | `NOTION_URL` | Notion site base URL (mirror/proxy) | `https://www.notion.so` |
 | `NOTION_DOMAIN` | Cookie domain for login.py | `www.notion.so` |
+| `NOTION_RUNTIME` | `agent_service` (new Notion Agent protocol) / `legacy` (runInferenceTranscript) | `agent_service` |
+| `NOTION_IMPERSONATE` | curl_cffi browser TLS fingerprint | `chrome` |
+| `AGENT_SERVICE_TIMEOUT_S` | agent_service reply timeout (s) | `240` |
+| `AGENT_SERVICE_DELETE_THREAD` | Delete the Notion thread after replying | `false` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `TZ` | Timezone | `Asia/Shanghai` |
 
