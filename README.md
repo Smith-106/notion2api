@@ -6,7 +6,7 @@
 
 Notion2API 对 Notion AI 网页接口进行逆向工程，将其封装为标准的 `/v1/chat/completions` 端点，可直接用于 Cherry Studio、Zotero 以及任何兼容 OpenAI 的客户端。
 
-2026.09.06：模型列表已同步至 23 个，新增 GPT-6 Astra（`orlando-quinn`）。
+2026.10.23：模型列表已同步至 34 个，并新增 Notion Agent Service 协议支持。
 
 ---
 
@@ -14,7 +14,7 @@ Notion2API 对 Notion AI 网页接口进行逆向工程，将其封装为标准�
 
 - **OpenAI 兼容** — 标准 `/v1/chat/completions` 端点，支持流式（SSE）和非流式响应
 - **三种运行模式** — Lite / Standard / Heavy，满足不同使用场景
-- **23 个 AI 模型** — Claude（含 Opus 5）、GPT-6 Astra、GPT-5.x、Gemini、Kimi、Grok、DeepSeek、GLM、Fable
+- **34 个 AI 模型 + Auto** — Claude（含 Opus 5.5）、GPT-6.x、GPT-5.x、Gemini、Kimi、Grok、DeepSeek、GLM、Fable
 - **Thinking 面板** — 所有模型均支持推理过程展示
 - **Search 面板** — 展示 Web 搜索查询和来源链接
 - **多账号池** — Round-Robin 负载均衡，带冷却故障转移
@@ -127,28 +127,40 @@ uvicorn app.server:app --host 0.0.0.0 --port 8000
 | 模型名称 | 说明 |
 |---|---|
 | `claude-sonnet4.6` | 速度与质量的最佳平衡 — **最推荐** |
-| `claude-sonnet5` | 最新 Sonnet，推理与 agent 能力更强 |
+| `claude-sonnet5` | Sonnet 5 |
+| `claude-sonnet5.5` | Sonnet 5.5 |
 | `claude-opus4.6` | 推理能力更强，建议适量使用 |
 | `claude-opus4.7` | 更强推理能力 |
 | `claude-opus4.8` | 强推理 Claude |
-| `claude-opus5` | 最新 Claude Opus，推理能力最强 |
+| `claude-opus5` | Claude Opus 5 |
+| `claude-opus5.5` | Claude Opus 5.5 |
 | `claude-haiku4.5` | Haiku 4.5 |
+| `claude-haiku5.5` | Haiku 5.5 |
 | `gpt-6-astra` | GPT-6 Astra |
+| `gpt-6.1-sol` | GPT-6.1 Sol |
+| `gpt-6-luna` | GPT-6 Luna |
 | `gpt-5.6-sol` | GPT-5.6 Sol |
 | `gpt-5.6-terra` | GPT-5.6 Terra |
 | `gpt-5.6-luna` | GPT-5.6 Luna |
 | `gpt-5.5` | GPT-5.5 |
-| `gpt-5.4` | OpenAI 模型 |
+| `gpt-5.4` | GPT-5.4 |
+| `gpt-5.4-mini` | GPT-5.4 Mini |
+| `gpt-5.4-nano` | GPT-5.4 Nano |
+| `gemini-3.7flash` | Gemini 3.7 Flash |
+| `gemini-3.6flash` | Gemini 3.6 Flash |
 | `gemini-3.5flash` | Gemini 3.5 Flash |
-| `gemini-3.1pro` | Google 最强推理模型 |
+| `gemini-3.1pro` | Gemini 3.1 Pro |
 | `gemini-3flash` | Gemini 3 Flash |
+| `kimi-k3` | Kimi K3 |
 | `kimi-2.7` | Kimi K2.7 Code |
 | `grok-4.3` | xAI Grok 4.3 |
 | `spacexai-4.5` | SpaceXAI 4.5 |
 | `grok-build0.1` | xAI Grok Build 0.1 |
 | `deepseek-v4pro` | DeepSeek V4 Pro |
+| `deepseek-v4flash` | DeepSeek V4 Flash |
 | `glm-5.2` | GLM 5.2 |
 | `fable-5` | Fable 5 |
+| `auto` | 由 Notion 自动选择模型（仅 `agent_service`） |
 
 完整列表：`GET http://localhost:8000/v1/models`
 
@@ -228,6 +240,9 @@ for chunk in response:
 | `NOTION_IMPERSONATE` | curl_cffi 浏览器 TLS 指纹 | `chrome` |
 | `AGENT_SERVICE_TIMEOUT_S` | agent_service 单次回复超时（秒） | `240` |
 | `AGENT_SERVICE_DELETE_THREAD` | 回复后删除 Notion 里的线程 | `false` |
+| `STREAM_KEEPALIVE_S` | 流式响应空闲时的 SSE 保活间隔（秒） | `15` |
+| `FIRST_ITEM_WAIT_S` | 首个流式事件的等待间隔（秒） | `20` |
+| `NOTION_DEBUG_OVERRIDES` | legacy 请求包含调试覆盖参数 | `false` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 | `TZ` | 时区 | `Asia/Shanghai` |
 

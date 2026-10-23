@@ -6,13 +6,15 @@
 
 Notion2API reverse-engineers the Notion AI web interface and exposes it as a standard `/v1/chat/completions` endpoint, making it directly usable with Cherry Studio, Zotero, and any other OpenAI-compatible client.
 
+2026.10.23: Synced 34 models and added support for Notion's Agent Service protocol.
+
 ---
 
 ## Features
 
 - **OpenAI Compatible** — Standard `/v1/chat/completions` endpoint, streaming (SSE) and non-streaming
 - **Three Operation Modes** — Lite / Standard / Heavy to fit different use cases
-- **23 AI Models** — Claude (incl. Opus 5), GPT-6 Astra, GPT-5.x, Gemini, Kimi, Grok, DeepSeek, GLM, Fable
+- **34 AI Models + Auto** — Claude (incl. Opus 5.5), GPT-6.x, GPT-5.x, Gemini, Kimi, Grok, DeepSeek, GLM, Fable
 - **Thinking Panel** — Reasoning process display for all models
 - **Search Panel** — Web search queries and source links
 - **Multi-Account Pool** — Round-Robin load balancing with cooldown failover
@@ -126,27 +128,39 @@ Access the Web UI at `http://localhost:8000`.
 |---|---|
 | `claude-sonnet4.6` | Best balance of speed and quality — **most recommended** |
 | `claude-sonnet5` | Sonnet 5 |
+| `claude-sonnet5.5` | Sonnet 5.5 |
 | `claude-opus4.6` | Stronger reasoning, use sparingly |
 | `claude-opus4.7` | Stronger reasoning |
 | `claude-opus4.8` | Strong reasoning Claude |
-| `claude-opus5` | Newest Claude Opus, strongest reasoning |
+| `claude-opus5` | Claude Opus 5 |
+| `claude-opus5.5` | Claude Opus 5.5 |
 | `claude-haiku4.5` | Haiku 4.5 |
+| `claude-haiku5.5` | Haiku 5.5 |
 | `gpt-6-astra` | GPT-6 Astra |
+| `gpt-6.1-sol` | GPT-6.1 Sol |
+| `gpt-6-luna` | GPT-6 Luna |
 | `gpt-5.6-sol` | GPT-5.6 Sol |
 | `gpt-5.6-terra` | GPT-5.6 Terra |
 | `gpt-5.6-luna` | GPT-5.6 Luna |
 | `gpt-5.5` | GPT-5.5 |
-| `gpt-5.4` | OpenAI model |
+| `gpt-5.4` | GPT-5.4 |
+| `gpt-5.4-mini` | GPT-5.4 Mini |
+| `gpt-5.4-nano` | GPT-5.4 Nano |
+| `gemini-3.7flash` | Gemini 3.7 Flash |
+| `gemini-3.6flash` | Gemini 3.6 Flash |
 | `gemini-3.5flash` | Gemini 3.5 Flash |
-| `gemini-3.1pro` | Google's strongest reasoning model |
+| `gemini-3.1pro` | Gemini 3.1 Pro |
 | `gemini-3flash` | Gemini 3 Flash |
+| `kimi-k3` | Kimi K3 |
 | `kimi-2.7` | Kimi K2.7 Code |
 | `grok-4.3` | xAI Grok 4.3 |
 | `spacexai-4.5` | SpaceXAI 4.5 |
 | `grok-build0.1` | xAI Grok Build 0.1 |
 | `deepseek-v4pro` | DeepSeek V4 Pro |
+| `deepseek-v4flash` | DeepSeek V4 Flash |
 | `glm-5.2` | GLM 5.2 |
 | `fable-5` | Fable 5 |
+| `auto` | Let Notion select a model (`agent_service` only) |
 
 Full list via API: `GET http://localhost:8000/v1/models`
 
@@ -226,6 +240,9 @@ Access `http://localhost:8000` for the built-in **Notion AI Studio** interface:
 | `NOTION_IMPERSONATE` | curl_cffi browser TLS fingerprint | `chrome` |
 | `AGENT_SERVICE_TIMEOUT_S` | agent_service reply timeout (s) | `240` |
 | `AGENT_SERVICE_DELETE_THREAD` | Delete the Notion thread after replying | `false` |
+| `STREAM_KEEPALIVE_S` | SSE keepalive interval while the stream is idle (s) | `15` |
+| `FIRST_ITEM_WAIT_S` | Wait interval for the first stream item (s) | `20` |
+| `NOTION_DEBUG_OVERRIDES` | Include debug overrides in legacy requests | `false` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `TZ` | Timezone | `Asia/Shanghai` |
 

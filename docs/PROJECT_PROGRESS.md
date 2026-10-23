@@ -2,7 +2,7 @@
 
 > 本文档记录项目的完整状态、架构细节、开发历程和当前进展。  
 > 目标：阅读本文档后，即可全面掌握项目最新全貌。  
-> 最后更新：2026-09-06（模型列表同步至 23 个，新增 GPT-6 Astra）
+> 最后更新：2026-10-23（合并 PR #29，新增 Agent Service 协议并同步至 34 个模型）
 
 ---
 
@@ -10,13 +10,13 @@
 
 ### 1.1 项目定位
 
-Notion2API 是一个将 **Notion AI** 逆向封装为 **OpenAI 兼容 API** 的开源项目。通过逆向 Notion 的 Web API（`/api/v3/runInferenceTranscript`），将 Notion AI 的能力以标准 `/v1/chat/completions` 接口对外暴露，使得 Cherry Studio、Zotero 等第三方客户端可以直接调用。
+Notion2API 是一个将 **Notion AI** 逆向封装为 **OpenAI 兼容 API** 的开源项目。通过逆向 Notion 的 Web API（Agent Service 或旧版 `/api/v3/runInferenceTranscript`），将 Notion AI 的能力以标准 `/v1/chat/completions` 接口对外暴露，使得 Cherry Studio、Zotero 等第三方客户端可以直接调用。
 
 ### 1.2 核心特性
 
 - **OpenAI 兼容 API**：标准 `/v1/chat/completions` 端点，支持流式（SSE）和非流式响应
 - **三种运行模式**：Lite / Standard / Heavy，满足不同场景需求
-- **23 个 AI 模型**：Claude（含 Opus 5）、GPT-6 Astra、GPT-5.x、Gemini、Kimi、Grok、DeepSeek、GLM、Fable
+- **34 个 AI 模型 + Auto**：Claude（含 Opus 5.5）、GPT-6.x、GPT-5.x、Gemini、Kimi、Grok、DeepSeek、GLM、Fable
 - **三层记忆系统**（Heavy 模式）：滑动窗口 + 压缩摘要 + 完整归档
 - **多账号负载均衡**：Round-Robin 轮询 + 冷却机制
 - **内置 Web UI**：Claude 风格界面，支持 Thinking 面板、Search 面板、对话管理
@@ -39,7 +39,8 @@ Notion2API 是一个将 **Notion AI** 逆向封装为 **OpenAI 兼容 API** 的�
 |------|------|
 | Python 3.11 | 运行时 |
 | FastAPI | Web 框架 |
-| cloudscraper | 绕过 Cloudflare 反爬（Notion API 请求） |
+| curl_cffi | 模拟 Chrome TLS 指纹（Notion API 请求） |
+| cloudscraper | Cloudflare 挑战处理与 HTTP 会话回退 |
 | requests | HTTP 客户端 |
 | httpx | 异步 HTTP 客户端（SiliconFlow 摘要服务） |
 | SQLite | 数据持久化（Heavy 模式） |
@@ -222,30 +223,38 @@ notion2api/
 - `compressed_summaries`：压缩摘要表（round_index, user_content, assistant_content, summary, compress_status）
 - `full_archive`：完整归档表（round_index, role, content）
 
-**关键行为约束**（不可修改）：
+**旧版 legacy 模式关键行为约束**：
 1. **Thread ID 持久化**：整个对话复用同一个 thread_id
 2. **is_partial_transcript=True**：重用 thread 时必须设置，否则 AI 失忆
-3. **不删除 Thread**：Notion 主页会累积对话（可接受的副作用）
+3. **默认不删除 Thread**：Notion 主页会累积对话（可接受的副作用）
 4. **强制滑动窗口**：`get_transcript_payload()` 不回退到 messages 表
 
 ### 4.3 Notion API 逆向客户端
 
-**核心端点**：`https://www.notion.so/api/v3/runInferenceTranscript`
+**核心端点**：
+- Agent Service（默认）：`createAgentThread` + `listenToThreadTranscript`
+- legacy：`runInferenceTranscript`
 
-**请求流程**：
+**Agent Service 请求流程**：
+1. 将对话历史整理为单条用户提示词，并解析模型代号
+2. 调用 `createAgentThread` 创建个人 Agent 线程
+3. 调用 `listenToThreadTranscript` 监听 NDJSON 流
+4. 将 transcript delta 解析为 content、thinking 和 final_content
+5. 可通过 `AGENT_SERVICE_DELETE_THREAD=true` 在回复后删除线程
+
+**legacy 请求流程**：
 1. 构建 transcript（config + context + 对话历史）
 2. 将外部模型名映射为 Notion 内部代号（如 `claude-sonnet4.6` → `almond-croissant-low`）
 3. 根据模型确定 thread type（`workflow` 或 `markdown-chat`）
-4. 使用 cloudscraper 绕过 Cloudflare 发送请求
-5. 解析 NDJSON 流式响应
+4. 发送请求并解析 NDJSON 流式响应
 
-**Thread 类型**：
+**legacy Thread 类型**：
 - `workflow`：大多数模型使用，支持 thinking/search
-- `markdown-chat`：仅 Gemini 2.5 Flash 使用
+- `markdown-chat`：仅 Gemini 3.5 Flash 使用
 
 **反爬措施**：
-- 使用 cloudscraper 模拟浏览器（每个账号复用一个实例，保留 Cloudflare challenge cookie）
-- 收到 403 时自动重建 scraper 刷新 Cloudflare challenge
+- 优先使用 curl_cffi 模拟 Chrome TLS 指纹，不可用时回退 cloudscraper
+- 每个账号复用 HTTP 会话，收到 403 时自动重建会话刷新 Cloudflare challenge
 - Cookie 通过 header 字符串传递（绕过 cookie jar 的非 ASCII 编码问题）
 - 携带完整的 headers（User-Agent, notion-client-version 等）
 - `notion-client-version` 可通过环境变量 `NOTION_CLIENT_VERSION` 覆盖
@@ -289,27 +298,39 @@ Notion 的流式响应是 NDJSON 格式，每行是一个 JSON 对象。解析�
 |----------|-----------------|-------------|------|
 | claude-sonnet4.6 | almond-croissant-low | workflow | **推荐**，速度与质量最佳平衡 |
 | claude-sonnet5 | angel-cake-high | workflow | Sonnet 5 |
+| claude-sonnet5.5 | achira-donut | workflow | Sonnet 5.5 |
 | claude-opus4.6 | avocado-froyo-medium | workflow | 更强推理，不建议频繁使用 |
 | claude-opus4.7 | apricot-sorbet-high | workflow | 更强推理 |
 | claude-opus4.8 | ambrosia-tart-high | workflow | 强推理 Claude |
-| claude-opus5 | agave-flan | workflow | 最新 Claude Opus，最强推理 |
+| claude-opus5 | agave-flan | workflow | Claude Opus 5 |
+| claude-opus5.5 | albuquerque-quinn | workflow | Claude Opus 5.5 |
 | claude-haiku4.5 | anthropic-haiku-4.5 | workflow | Haiku 4.5 |
+| claude-haiku5.5 | amla-jam | workflow | Haiku 5.5 |
 | gpt-6-astra | orlando-quinn | workflow | GPT-6 Astra |
+| gpt-6.1-sol | omniberry-sundae | workflow | GPT-6.1 Sol |
+| gpt-6-luna | omodi | workflow | GPT-6 Luna |
 | gpt-5.6-sol | orange-mousse | workflow | GPT-5.6 Sol |
 | gpt-5.6-terra | orchid-muffin | workflow | GPT-5.6 Terra |
 | gpt-5.6-luna | olive-jellyroll | workflow | GPT-5.6 Luna |
-| gpt-5.4 | oval-kumquat-medium | workflow | OpenAI 模型 |
+| gpt-5.4 | oval-kumquat-medium | workflow | GPT-5.4 |
+| gpt-5.4-mini | oregon-grape-medium | workflow | GPT-5.4 Mini |
+| gpt-5.4-nano | otaheite-apple-medium | workflow | GPT-5.4 Nano |
 | gpt-5.5 | opal-quince-medium | workflow | GPT-5.5 |
+| gemini-3.7flash | grapefruit-zeppole | workflow | Gemini 3.7 Flash |
+| gemini-3.6flash | vertex-gemini-3.6-flash | workflow | Gemini 3.6 Flash |
 | gemini-3.5flash | vertex-gemini-3.5-flash | markdown-chat | Gemini 3.5 Flash |
-| gemini-3.1pro | galette-medium-thinking | workflow | Google 最强推理模型 |
+| gemini-3.1pro | galette-medium-thinking | workflow | Gemini 3.1 Pro |
 | gemini-3flash | gingerbread | workflow | Gemini 3 Flash |
+| kimi-k3 | fireworks-kimi-k3 | workflow | Kimi K3 |
 | kimi-2.7 | fireworks-kimi-k2.7 | workflow | Kimi K2.7 Code |
 | grok-4.3 | xigua-mochi-medium | workflow | xAI Grok 4.3 |
 | spacexai-4.5 | strawberry-whoopiepie | workflow | SpaceXAI 4.5 |
 | grok-build0.1 | xinomavro-cake | workflow | xAI Grok Build 0.1 |
 | deepseek-v4pro | baseten-deepseek-v4-pro | workflow | DeepSeek V4 Pro |
+| deepseek-v4flash | baseten-deepseek-v4-flash | workflow | DeepSeek V4 Flash |
 | glm-5.2 | baseten-glm-5.2 | workflow | GLM 5.2 |
 | fable-5 | acai-budino-high | workflow | Fable 5 |
+| auto | auto | agent_service | 由 Notion 自动选择模型；legacy 回退默认模型 |
 
 ### 4.7 前端 Web UI
 
@@ -371,6 +392,13 @@ Notion 的流式响应是 NDJSON 格式，每行是一个 JSON 对象。解析�
 | `SILICONFLOW_API_KEY` | Heavy 模式摘要压缩服务密钥 | 空 |
 | `DISABLE_RATE_LIMIT` | 关闭速率限制 | `false` |
 | `NOTION_CLIENT_VERSION` | 覆盖 Notion 客户端版本号 | `23.13.20260228.0625` |
+| `NOTION_RUNTIME` | 上游协议：`agent_service` / `legacy` | `agent_service` |
+| `NOTION_IMPERSONATE` | curl_cffi 浏览器 TLS 指纹 | `chrome` |
+| `AGENT_SERVICE_TIMEOUT_S` | Agent Service 单次回复超时（秒） | `240` |
+| `AGENT_SERVICE_DELETE_THREAD` | 回复后删除 Notion 线程 | `false` |
+| `STREAM_KEEPALIVE_S` | SSE 空闲保活间隔（秒） | `15` |
+| `FIRST_ITEM_WAIT_S` | 首个流式事件等待间隔（秒） | `20` |
+| `NOTION_DEBUG_OVERRIDES` | legacy 请求包含调试覆盖参数 | `false` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 | `TZ` | 时区 | `Asia/Shanghai` |
 
@@ -458,7 +486,7 @@ Notion 的流式响应是 NDJSON 格式，每行是一个 JSON 对象。解析�
 - **新增文件**：`docs/PROJECT_PROGRESS.md`、`accounts.README.md`
 - **新增配置**：`NOTION_CLIENT_VERSION` 环境变量
 
-### Phase 7：新模型同步（2026-05 ~ 06）
+### Phase 7：协议适配与新模型同步（2026-05 ~ 10）
 
 | 日期 | 提交 | 内容 |
 |------|------|------|
@@ -469,10 +497,11 @@ Notion 的流式响应是 NDJSON 格式，每行是一个 JSON 对象。解析�
 | 06-06 | `880357e` | 同步官方新模型 Grok 4.3、Grok Build 0.1、DeepSeek V4 Pro |
 | 07-25 | — | 同步官方新模型 Claude Opus 5（`claude-opus5` / `agave-flan`），模型总数 22 |
 | 09-06 | — | 新增 GPT-6 Astra（`gpt-6-astra` / `orlando-quinn`，codename 经 `getAvailableModels` 验证，活体调用通过），模型总数 23 |
+| 10-23 | `6880ba0` | **PR #29 合并**：新增 Agent Service 协议、Chrome TLS 指纹与 SSE 保活，同步 11 个新模型及 Auto，模型总数 34 |
 
 ---
 
-## 八、Git 状态（截至 2026-06）
+## 八、Git 状态（截至 2026-10）
 
 ### 8.1 分支状态
 
@@ -583,10 +612,11 @@ uvicorn app.server:app --host 0.0.0.0 --port 8000
 
 ## 十二、当前工作重点
 
-**截至 2026-07**：
+**截至 2026-10**：
 
 **已完成**：
-- ✅ 模型列表已同步至 23 个，新增 GPT-6 Astra（`orlando-quinn`），覆盖最新 Claude Opus 5（`agave-flan`）、GPT-5.6、Gemini、Kimi、GLM、Grok、DeepSeek 与 Fable 模型
+- ✅ 合并 PR #29：新增 Agent Service 协议，使用 curl_cffi 模拟 Chrome TLS 指纹，并加入 SSE 保活和阻塞读取隔离
+- ✅ 模型列表已同步至 34 个并提供 Auto，新增 Claude 5.5、GPT-6.1 Sol、GPT-6 Luna、Gemini 3.6/3.7 Flash、Kimi K3 等模型
 - ✅ 合并 PR #12：浏览器辅助登录 `login.py`（CDP，支持 Chrome/Edge，自动写入 accounts.json + .env）
 - ✅ 文档结构重组：README 双语重写、issues.md 中英合并、删除冗余 md 文件（ARCHITECTURE.md、DEPLOYMENT.md、accounts.README.md、CLAUDE.md、issues_CN.md）
 - ✅ 结构化错误提示系统（11 种错误码，前端红色错误卡片）
